@@ -764,12 +764,49 @@
 
     main > section:nth-of-type(2) article > section:first-of-type label {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-columns: auto minmax(0, 1fr) 42px;
       align-items: center;
       gap: 10px;
       color: var(--gris);
       font-size: 0.85rem;
       font-weight: 500;
+    }
+
+    /* Muestra junto al campo: refleja al momento el código escrito */
+    main > section:nth-of-type(2) article > section:first-of-type label span {
+      height: 42px;
+      border-radius: var(--radio-control);
+      background: var(--color);
+      box-shadow: inset 0 0 0 1px rgba(15, 27, 42, 0.1);
+    }
+
+    main input[aria-invalid="true"],
+    main input[aria-invalid="true"]:focus-visible {
+      border-color: #e5484d;
+      box-shadow: 0 0 0 3px rgba(229, 72, 77, 0.18);
+    }
+
+    /* Tu color, marcado dentro de las paletas */
+    main button[data-hex][data-base] {
+      position: relative;
+    }
+
+    main button[data-hex][data-base]::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: 8px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--tinta);
+      box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
+      transform: translateX(-50%);
+    }
+
+    main button[data-hex][data-base][data-tono="oscuro"]::after {
+      background: #ffffff;
+      box-shadow: 0 0 0 2px rgba(15, 27, 42, 0.35);
     }
 
     /* Armonía */
@@ -1034,7 +1071,7 @@
           <span role="slider" tabindex="0" aria-label="Saturación y brillo" aria-valuemin="0" aria-valuemax="100"></span>
           <input type="range" min="0" max="359" step="1" value="200" aria-label="Tono">
           <p>
-            <label>HEX <input type="text" maxlength="7" value="#38B6F5" spellcheck="false" autocomplete="off"></label>
+            <label>HEX <input type="text" maxlength="7" value="#38B6F5" placeholder="#RRGGBB" spellcheck="false" autocomplete="off"><span aria-hidden="true"></span></label>
           </p>
           <menu aria-label="Acciones del color">
             <li><button type="button" data-accion="copiar" data-icono="copiar" data-principal>Copiar</button></li>
@@ -1246,33 +1283,79 @@
       return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6;
     }
 
-    function armonia(h, tipo) {
+    // HSL sin redondear, para girar el tono sin perder el color exacto
+    function hslExacto(hex) {
+      const [r, g, b] = hexARgb(hex).map((x) => x / 255);
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const l = (max + min) / 2;
+      if (max === min) return [0, 0, l * 100];
+      const d = max - min;
+      const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      let h;
+      if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      return [h * 60, s * 100, l * 100];
+    }
+
+    function girar(hex, grados) {
+      const [h, s, l] = hslExacto(hex);
+      return hslAHex(tono(h + grados), s, l);
+    }
+
+    function mezclar(hex, otro, cantidad) {
+      const a = hexARgb(hex);
+      const b = hexARgb(otro);
+      return rgbAHex(...a.map((x, i) => x + (b[i] - x) * cantidad));
+    }
+
+    const oscurecer = (hex, cantidad) => mezclar(hex, '#000000', cantidad);
+    const aclarar = (hex, cantidad) => mezclar(hex, '#FFFFFF', cantidad);
+
+    // Cada armonía parte del color exacto, que siempre aparece en la paleta
+    function armonia(base, tipo) {
       switch (tipo) {
-        case 'complementario': return [h, h + 180].map((x) => hslAHex(tono(x), 55, 50));
-        case 'analogo': return [h - 30, h, h + 30].map((x) => hslAHex(tono(x), 55, 52));
-        case 'triadico': return [h, h + 120, h + 240].map((x) => hslAHex(tono(x), 55, 48));
-        case 'monocromatico': return [22, 38, 54, 70, 86].map((l) => hslAHex(tono(h), 40, l));
-        case 'tonos': return Array.from({ length: 8 }, (_, i) => hslAHex(tono(h), 55, Math.round((i * 100) / 7)));
+        case 'complementario': return [base, girar(base, 180)];
+        case 'analogo': return [girar(base, -30), base, girar(base, 30)];
+        case 'triadico': return [base, girar(base, 120), girar(base, 240)];
+        case 'monocromatico': return [oscurecer(base, 0.6), oscurecer(base, 0.3), base, aclarar(base, 0.35), aclarar(base, 0.7)];
+        case 'tonos': return [
+          ...[0.85, 0.65, 0.45, 0.25].map((t) => oscurecer(base, t)),
+          base,
+          ...[0.25, 0.45, 0.65, 0.85].map((t) => aclarar(base, t)),
+        ];
         default: return [];
       }
     }
 
     /* ---------- Muestras que se copian con un clic ---------- */
-    function crearMuestra(hex) {
+    function crearMuestra(hex, esBase = false) {
       const boton = document.createElement('button');
       boton.type = 'button';
       boton.dataset.hex = hex;
       boton.dataset.tono = esClaro(hex) ? 'claro' : 'oscuro';
+      if (esBase) boton.dataset.base = '';
       boton.style.setProperty('--muestra', hex);
       boton.textContent = hex.slice(1);
-      boton.setAttribute('aria-label', `Copiar ${hex}`);
+      boton.setAttribute('aria-label', esBase ? `Copiar ${hex}, tu color` : `Copiar ${hex}`);
       return boton;
     }
 
-    function pintarMuestras(lista, hexes) {
-      lista.replaceChildren(...hexes.map((hex) => {
+    // Crea las muestras y marca con un punto la primera que coincide con el color base
+    function muestrasConBase(hexes, base) {
+      let marcado = false;
+      return hexes.map((hex) => {
+        const esBase = !marcado && hex === base;
+        if (esBase) marcado = true;
+        return crearMuestra(hex, esBase);
+      });
+    }
+
+    function pintarMuestras(lista, hexes, base = null) {
+      lista.replaceChildren(...muestrasConBase(hexes, base).map((muestra) => {
         const elemento = document.createElement('li');
-        elemento.append(crearMuestra(hex));
+        elemento.append(muestra);
         return elemento;
       }));
     }
@@ -1297,7 +1380,10 @@
 
     const color = { h: 200, s: 77, v: 96 };
     let hexActual = '#38B6F5';
+    let hexEscrito = null;        // el código tal cual lo escribiste, para no perderlo por redondeos
     let armoniaPintada = '';
+    let hexPaletas = '';
+    let temporizadorPaletas = 0;
     let marcoSelector = 0;
 
     function pintarSelector() {
@@ -1306,9 +1392,10 @@
     }
 
     function pintarSelectorAhora() {
-      const [r, g, b] = hsvARgb(color.h, color.s, color.v);
+      const sigueIgual = hexEscrito && hexEscrito.h === color.h && hexEscrito.s === color.s && hexEscrito.v === color.v;
+      hexActual = sigueIgual ? hexEscrito.hex : rgbAHex(...hsvARgb(color.h, color.s, color.v));
+      const [r, g, b] = hexARgb(hexActual);
       const [hh, ss, ll] = rgbAHsl(r, g, b);
-      hexActual = rgbAHex(r, g, b);
 
       selector.style.setProperty('--h', color.h.toFixed(1));
       selector.style.setProperty('--x', color.s.toFixed(2));
@@ -1323,16 +1410,23 @@
       caja.setAttribute('aria-valuenow', Math.round(color.s));
       caja.setAttribute('aria-valuetext', `Saturación ${Math.round(color.s)} %, brillo ${Math.round(color.v)} %`);
 
-      // La armonía solo depende del tono: se repinta únicamente si cambia
-      const clave = `${Math.round(color.h)}-${selectArmonia.value}`;
+      // La armonía parte de tu color exacto y se repinta solo si cambia
+      const clave = `${hexActual}-${selectArmonia.value}`;
       if (clave !== armoniaPintada) {
         armoniaPintada = clave;
-        pintarMuestras(listaArmonia, armonia(Math.round(color.h), selectArmonia.value));
+        pintarMuestras(listaArmonia, armonia(hexActual, selectArmonia.value), hexActual);
+      }
+
+      // Las paletas de abajo también siguen a tu color (con una pequeña espera al arrastrar)
+      if (hexActual !== hexPaletas) {
+        clearTimeout(temporizadorPaletas);
+        temporizadorPaletas = setTimeout(pintarPaletas, 250);
       }
     }
 
     function fijarDesdeHex(hex) {
       [color.h, color.s, color.v] = rgbAHsv(...hexARgb(hex));
+      hexEscrito = { hex, h: color.h, s: color.s, v: color.v };
       pintarSelector();
     }
 
@@ -1367,18 +1461,34 @@
       pintarSelector();
     });
 
-    entradaHex.addEventListener('change', () => {
-      const hex = normalizarHex(entradaHex.value);
-      if (hex) {
-        fijarDesdeHex(hex);
-      } else {
-        avisar('Código no válido. Ejemplo: #38B6F5');
-        entradaHex.value = hexActual;
-      }
+    // Mientras escribes: en cuanto hay 6 cifras, el color se aplica al momento
+    entradaHex.addEventListener('input', () => {
+      const valor = entradaHex.value.trim().replace(/^#/, '');
+      const posible = /^[0-9a-f]{0,6}$/i.test(valor);
+      entradaHex.setAttribute('aria-invalid', String(!posible));
+      if (posible && valor.length === 6) fijarDesdeHex(`#${valor.toUpperCase()}`);
     });
 
+    // Al pulsar Enter o salir del campo también vale el formato corto (#F60)
+    function confirmarHex() {
+      const hex = normalizarHex(entradaHex.value);
+      entradaHex.setAttribute('aria-invalid', 'false');
+      if (hex) {
+        fijarDesdeHex(hex);
+        entradaHex.value = hex;
+      } else {
+        if (entradaHex.value.trim()) avisar('Código no válido. Ejemplo: #38B6F5');
+        entradaHex.value = hexActual;
+      }
+    }
+
+    entradaHex.addEventListener('change', confirmarHex);
+
     entradaHex.addEventListener('keydown', (evento) => {
-      if (evento.key === 'Enter') entradaHex.blur();
+      if (evento.key !== 'Enter') return;
+      evento.preventDefault();
+      confirmarHex();
+      entradaHex.select();
     });
 
     selectArmonia.addEventListener('change', pintarSelector);
@@ -1404,7 +1514,7 @@
           // El usuario canceló el cuentagotas
         }
       } else if (accion === 'copiar-paleta') {
-        copiar(armonia(Math.round(color.h), selectArmonia.value).join(', '), 'Paleta copiada');
+        copiar(armonia(hexActual, selectArmonia.value).join(', '), 'Paleta copiada');
       }
     });
 
@@ -1420,41 +1530,61 @@
       ['monocromatico', 'Monocromático'],
     ];
 
-    function paleta(modo, h) {
+    let pasoPaletas = 37;
+
+    function paleta(modo, base) {
       switch (modo) {
-        case 'complementario':
-          return [[0, 32], [0, 50], [0, 68], [180, 55], [180, 35]].map(([d, l]) => hslAHex(tono(h + d), 58, l));
+        case 'complementario': {
+          const opuesto = girar(base, 180);
+          return [oscurecer(base, 0.4), base, aclarar(base, 0.45), opuesto, oscurecer(opuesto, 0.4)];
+        }
         case 'analogo':
-          return [-40, -20, 0, 20, 40].map((d) => hslAHex(tono(h + d), 55, 52));
-        case 'triadico':
-          return [[0, 48], [120, 46], [240, 44], [0, 66], [120, 64]].map(([d, l]) => hslAHex(tono(h + d), 55, l));
+          return [-40, -20, 0, 20, 40].map((d) => (d === 0 ? base : girar(base, d)));
+        case 'triadico': {
+          const segundo = girar(base, 120);
+          return [base, segundo, girar(base, 240), aclarar(base, 0.45), aclarar(segundo, 0.45)];
+        }
         default:
-          return [22, 38, 54, 70, 86].map((l) => hslAHex(tono(h), 42, l));
+          return [oscurecer(base, 0.6), oscurecer(base, 0.3), base, aclarar(base, 0.35), aclarar(base, 0.7)];
       }
     }
 
-    function pintarPaletas(base) {
+    // Las cuatro primeras paletas usan tu color exacto; las demás varían el tono
+    function pintarPaletas() {
+      clearTimeout(temporizadorPaletas);
+      hexPaletas = hexActual;
+      const [h, s, l] = hslExacto(hexActual);
       const fragmento = document.createDocumentFragment();
       for (let i = 0; i < 16; i += 1) {
         const [modo, nombre] = MODOS[i % MODOS.length];
+        const propia = i < 4;
+        const base = propia ? hexActual : hslAHex(tono(h + i * pasoPaletas), limitar(s, 35, 75), limitar(l, 38, 62));
         const elemento = document.createElement('li');
         const fila = document.createElement('p');
-        fila.append(...paleta(modo, tono(base + i * 37)).map((hex) => crearMuestra(hex)));
+        fila.append(...muestrasConBase(paleta(modo, base), propia ? hexActual : null));
         const etiqueta = document.createElement('small');
         etiqueta.textContent = nombre;
         elemento.append(fila, etiqueta);
         fragmento.append(elemento);
       }
       listaPaletas.replaceChildren(fragmento);
-      listaPaletas.scrollLeft = 0;
     }
 
     seccionPaletas.querySelector('header menu').addEventListener('click', (evento) => {
       const accion = evento.target.closest('button[data-accion]')?.dataset.accion;
       const behavior = sinMovimiento.matches ? 'auto' : 'smooth';
-      if (accion === 'anterior') listaPaletas.scrollBy({ left: -listaPaletas.clientWidth, behavior });
-      else if (accion === 'siguiente') listaPaletas.scrollBy({ left: listaPaletas.clientWidth, behavior });
-      else if (accion === 'mezclar') pintarPaletas(Math.random() * 360);
+      if (accion === 'anterior') {
+        listaPaletas.scrollBy({ left: -listaPaletas.clientWidth, behavior });
+      } else if (accion === 'siguiente') {
+        listaPaletas.scrollBy({ left: listaPaletas.clientWidth, behavior });
+      } else if (accion === 'mezclar') {
+        // Nuevas variaciones de tono; se muestran desde la primera que cambia
+        pasoPaletas = 23 + Math.floor(Math.random() * 135);
+        pintarPaletas();
+        const primeraNueva = listaPaletas.children[4];
+        const desplazamiento = primeraNueva.getBoundingClientRect().left - listaPaletas.getBoundingClientRect().left;
+        listaPaletas.scrollTo({ left: listaPaletas.scrollLeft + desplazamiento - 2, behavior });
+      }
     });
 
     // Arrastrar con el ratón (en táctil ya se desliza solo)
@@ -1522,7 +1652,7 @@
         ruedaHex.textContent = base;
         rueda.setAttribute('aria-valuenow', Math.round(ruedaTono));
         rueda.setAttribute('aria-valuetext', `${Math.round(ruedaTono)} grados, ${base}`);
-        pintarMuestras(ruedaLista, armonia(Math.round(ruedaTono), ruedaSelect.value));
+        pintarMuestras(ruedaLista, armonia(base, ruedaSelect.value), base);
       });
     }
 
@@ -1558,7 +1688,8 @@
 
     /* ---------- Inicio ---------- */
     fijarDesdeHex('#38B6F5');
-    pintarPaletas(200);
+    pintarSelectorAhora();
+    pintarPaletas();
     pintarRueda();
   </script>
 </body>
